@@ -1,233 +1,185 @@
 '''
 @author: raghul
 
-First line in test and train files contains the features separated by white spaces.
-Following lines are split on white spaces and stored in a tuple because the values 
-are heterogeneous (one for each feature) and derive meaning from their order.
+First line in test and train files (sys.argv[1], sys.argv[2]) contains the feature names 
+separated by white spaces. Following lines (attribute sets) are split on white spaces and 
+derive meaning from their order. The last element on each line is the class that the 
+attribute set belongs to. The given classes are used to compute training and testing 
+accuracies, i.e., accuracy of the dTree in predicting classes of the training and testing files.
 
-We use global variables to store features, number of features and most probable 
-classes at startup because they are constants.
+Leaves in the dTree are the classes. Labels are classes are used interchangeably. 
 
 Reference:
 https://en.wikipedia.org/wiki/Entropy_(information_theory)
 '''
-import math
 import sys
+import math
 
-def get_sets(a_file): # Read datasets from a file and store them as a list of tuples.
-    attributes = []
-    features = ()
-    first = 0
-    try:
-        with open(a_file, "r") as f: # File closes automatically once done.
-            for line in f:
-                line = line.split()
-                if first == 0: # First line contains features.
-                    first += 1
-                    features = tuple(line)
-                else:
-                    attributes.append(map(int, tuple(line)))
-        return features, attributes
-    except(IOError):
-        print "%s cannot be found." %(a_file)
-        sys.exit()
-   
-def find_counts(attributes, attributes_len): # Return the number of occurrences of each class.
-    all_classes = []
+def find_entropy(attributes, classes): # calculate entropy for given attributes, summation(prob * log2 prob)
+    attributes_len = len(attributes)
+    counts = {}
+    for each in classes:
+        counts[int(each)] = 0
     for i in range(attributes_len):
-        all_classes.append(attributes[i][-1])
-    unique_classes = list(set(all_classes)) # Find unique classes.
-    class_counts = {} # Key is the class. Value is the count.
-    for each in unique_classes:
-        count = all_classes.count(each)
-        class_counts[each] = count
-    return class_counts
-
-def find_entropy(class_counts, attributes_len): # Calculate entropy for the given data sets.        
+        cl = attributes[i][-1]
+        counts[cl] += 1
     entropy = 0
-    for key, value in class_counts.iteritems():
-        if not value == 0:
-            p = float(value) / attributes_len # Convert one of the values to float, so p is not rounded.
-            entropy += - p * math.log(p, 2)
+    for key in counts:
+        prob = float(counts[key]) / attributes_len
+        if prob != 0:
+            entropy += - prob * math.log(prob, 2) # log base 2
     return entropy
 
-def get_max(d): # Return keys sorted on their values.
-    values = d.values()
-    values.sort()
-    values = list(set(values))
-    max_keys = [[] for i in range(len(values))]
-    for key, value in d.iteritems():
-        max_keys[values.index(value)].append(key)
-    return max_keys
-
-def set_in_dict(d, map_list, value): # Set value to key (map_list) in a dictionary (d).
-    for k in map_list[:-1]: 
-        d = d[k]
-    d[map_list[-1]] = value
-    return # Because dictionary is mutable, this acts like 'pass by reference'.
-
-def find_branches(attributes, attributes_len, i): # Split the datasets based on each value that the selected feature (3rd argument) can take.
-    temp_arr = []
-    for j in range(attributes_len):
-        temp_arr.append(attributes[j][i])
-    possible_values = list(set(temp_arr))
-    branches = {}
-    for k in range(len(possible_values)):
-        branches[possible_values[k]] = []
-        for l in range(attributes_len):
-            if (attributes[l][i] == possible_values[k]):
-                branches[possible_values[k]].append(attributes[l])
-    return branches # 'key' is a possible value, 'value' is a list of attribute sets.
-
-'''
-For each feature that's not an ancestor, compute the information gain.
-Return the feature for which the information gain is maximum.
-'''
-def choose_feature(parent_entropy, parent_nodes, attributes, attributes_len): 
-    information_gains = {}
+def split_on(attributes, i): # split based on value of feature at index i
+    sets = {}
+    for j in range(len(attributes)):
+        val = attributes[j][i]
+        if val not in sets:
+            sets[val] = []
+        sets[val].append(attributes[j])
+    return sets
+    
+def get_gains(features, attributes, classes, parents): # compute information gains for all features not already a parent
+    attributes_len = len(attributes)
+    features_len = len(features)
+    information_gains = [0] * features_len
+    init_entropy = find_entropy(attributes, classes)
     for i in range(features_len):
-        if (features[i] in parent_nodes):
-            pass 
-        else:
-            branches = find_branches(attributes, attributes_len, i)
-            conditional_entropy = 0
-            for key, value in branches.iteritems():
-                value_len = len(value)
-                class_counts = find_counts(value, value_len)
-                entropy = find_entropy(class_counts, value_len)
-                p = float(len(value)) / attributes_len
-                conditional_entropy += p * entropy
-            information_gain = parent_entropy - conditional_entropy
-            information_gains[features[i]] = information_gain
-    return get_max(information_gains)[0][0]
+        if i not in parents:
+            sets = split_on(attributes, i)
+            weighted_entropy = 0
+            for key in sets:
+                data_set = sets[key]
+                data_set_len = len(data_set)
+                prob = float(data_set_len) / attributes_len
+                entropy = find_entropy(data_set, classes)
+                weighted_entropy += prob * entropy
+            information_gains[i] = init_entropy - weighted_entropy
+    return information_gains              
 
-def add_branches(decision_tree, parent_nodes, branches): # Add branches to the decision tree.
-    for key,value in branches.iteritems():
-        parent_nodes.append(key)
-        set_in_dict(decision_tree, parent_nodes, {})
-        create_decision_tree(decision_tree, parent_nodes, value)
-        del parent_nodes[-1] 
-    del parent_nodes[-1] 
+def set_dict(data_dict, map_list, last_feature, value): # set 'value' to the last key in map_list
+    if len(map_list) > 1:
+        for i in range(0, last_feature + 1):
+            key = map_list[i]
+            if key in data_dict:
+                data_dict = data_dict[key]
+    data_dict[map_list[-1]] = value
     return
 
-def assign_class(max_classes): # Return most probable class.
-    if len(max_classes[0]) > 1: # When there are more than one class that have the same probability, return the one that's in init_max.
-        for i in init_max:
-            for j in max_classes[0]:
-                if j in i:
-                    return j
-    else: # When there's just one element in max_classes[0], set it as the class.
-        return max_classes[0][0]
+def homogeneous(attributes): # do attributes belong to the same class?
+    classes = []
+    for i in range(len(attributes)):
+        classes.append(attributes[i][-1])
+    if len(set(classes)) == 1:
+        return classes[0]
+    
+def find_class(attributes): # return the most frequent class
+    counts = {}
+    for i in range(len(attributes)):
+        cl = attributes[i][-1]
+        if cl not in counts:
+            counts[cl] = 0
+        counts[cl] += 1
+    return max(counts.iterkeys(), key = (lambda key: counts[key]))
+    
+def build_tree(features, attributes, classes, parents, map_list, last_feature, dTree): # construct dTree
+    if len(parents) < len(features): # if all features are not already parents
+        cl = homogeneous(attributes)
+        if cl: # if homogeneous, set class
+            set_dict(dTree, map_list, last_feature, cl)
+            return
+        else: # choose feature using information gains
+            information_gains = get_gains(features, attributes, classes, parents)
+            max_gain = max(information_gains)
+            if(max_gain == 0):
+                cl = find_class(attributes)
+                set_dict(dTree, map_list, last_feature, cl)
+                return
+            feature_index = information_gains.index(max_gain)
+            parents.append(feature_index)
+            last_feature = len(map_list) # index of last feature in the map_list
+            map_list.append(feature_index)
+            set_dict(dTree, map_list, last_feature, {})
+            sets = split_on(attributes, feature_index)
+            for key in sets:
+                new_map_list = map_list + [key]
+                set_dict(dTree, new_map_list, last_feature, {})
+                build_tree(features, sets[key], classes, list(parents), list(new_map_list), last_feature, dTree)
+            return
+    else: # pick most frequent class as the prevailing class
+        cl = find_class(attributes)
+        set_dict(dTree, map_list, last_feature, cl)
+        return
+        
+def parse_file(train): # parse the input file; return features, attributes and unique classes
+    first = 0
+    features = []
+    attributes = []
+    classes = []
+    for line in open(train, "r"):
+        line_list = line.split()
+        if first == 0:
+            first += 1
+            line_len = len(line_list)
+            for i in range(0, line_len, 2):
+                features.append([line_list[i],int(line_list[i+1])]) # convert the number of possible values to int
+            continue
+        attributes.append(map(int, line_list))
+        classes.append(line_list[-1])
+    classes = list(set(classes))
+    return features, attributes, classes
 
-def create_decision_tree(decision_tree, parent_nodes, attributes): # Build decision tree from the attribute sets. 
-    attributes_len = len(attributes)
-    class_counts = find_counts(attributes, attributes_len)
-    entropy = find_entropy(class_counts, attributes_len)
-    if set(parent_nodes).issuperset(set(features)): # When data has been split on all features, assign the most probable class.
-        max_classes = get_max(class_counts)
-        set_in_dict(decision_tree, parent_nodes, assign_class(max_classes))
-    else: 
-        if entropy == 0: # No new information can be learned hereafter.
-            # There's clearly just one max
-            set_in_dict(decision_tree, parent_nodes, get_max(class_counts)[0][0])
-        else: 
-            selected_feature = choose_feature(entropy, parent_nodes, attributes, attributes_len)
-            parent_nodes.append(selected_feature)
-            max_classes = get_max(class_counts)
-            set_in_dict(decision_tree, parent_nodes, {"max_classes": max_classes})
-            for i in range(features_len):
-                if (features[i] == selected_feature):
-                    branches = find_branches(attributes, attributes_len, i)
-            add_branches(decision_tree, parent_nodes, branches)
-    return
-
-def pprint(d, indent, meta): # Pretty print a dictionary, removing 'meta' data.
-    for key, value in d.iteritems():
-        if key != meta:
-            print '| ' * indent + str(key)
+def fit_tree(a_set, tree): # fit given attribute set to dTree, return label
+    if type(tree) is dict:
+        for key, value in tree.iteritems():
+            attr = a_set[key]
             if type(value) is dict:
-                pprint(value, indent+1, meta)
-            else:
-                print '| ' * (indent+1) + str(value)
-    return
-
-def find_class(a_set, d): # Find the class of an attribute set from a decision tree.
-    if type(d) is dict:
-        for key, value in d.iteritems():
-            index = features.index(key)
-            try:
-                return find_class(a_set, value[a_set[index]])
-            except(KeyError): # When the feature doesn't take the given value in the decision tree, assign the most probable class at this stage.
-                return assign_class(value["max_classes"])
+                if attr in value:
+                    return fit_tree(a_set, value[attr])
     else:
-        return d
+        return tree
 
-def compute_accuracy(a_file, decision_tree): # Finds the accuracy of the decision tree on a given file.
-    sets = get_sets(a_file)[1] # We just need the attributes.
-    sets_len = len(sets)
-    match = 0
+def classify_file(attributes, dTree): # return list of predicted labels
     classes = []
-    for i in range(sets_len):
-        classes.append(find_class(sets[i], decision_tree))
-        if sets[i][-1] == classes[-1]:
-            match += 1
-    return (round((float(match) / sets_len) * 100, 4)), classes
-
-def if_none(flag):
-    if (flag == None or flag == 0):
-        return 0
-    return 1
-
-def find_accuracy(train, test, printTree = None): 
-    printTree = if_none(printTree)
-    global features, features_len, init_max
-    parent_nodes = []
-    decision_tree = {}
-    features, attributes = get_sets(train)
-    features_len = len(features)
-    ideal_len = features_len + 1
-    attributes[:] = [attr for attr in attributes if len(attr) == ideal_len] # Check if all attributes are the required length.
-    attributes_len = len(attributes)
-    if attributes_len == 0: # If the training file is empty, we return an empty decision tree.
-        return 0, 0     
-    class_counts = find_counts(attributes, attributes_len)
-    init_max = get_max(class_counts)
-    create_decision_tree(decision_tree, parent_nodes, attributes)
-    if printTree == 1:
-        pprint(decision_tree, 0, "max_classes")
-    train_acc = compute_accuracy(train, decision_tree)[0]
-    test_acc, classes = compute_accuracy(test, decision_tree)
-    return train_acc, test_acc, classes, decision_tree
-
-def find_classes_sets(feat, attributes, test_sets): # Used in the bagging example.
-    global features, features_len, init_max
-    parent_nodes = []
-    decision_tree = {}
-    features = feat
-    features_len = len(features)
-    ideal_len = features_len + 1
-    attributes[:] = [attr for attr in attributes if len(attr) == ideal_len] # Check if all attributes are the required length.
-    attributes_len = len(attributes)
-    if attributes_len == 0: # If the training file is empty, we return an empty decision tree.
-        return 0, 0     
-    class_counts = find_counts(attributes, attributes_len)
-    init_max = get_max(class_counts)
-    create_decision_tree(decision_tree, parent_nodes, attributes)
-    test_sets_len = len(test_sets)
-    classes = []
-    for i in range(test_sets_len):
-        classes.append(find_class(test_sets[i], decision_tree))
+    for a_set in attributes:
+        classes.append(fit_tree(a_set, dTree))
     return classes
 
-#print find_accuracy("train-1.dat.txt", "test-1.dat.txt", 1)
+def get_labels(attributes): # return given classes from attribute sets (last element)
+    classes = []
+    for each in attributes:
+        classes.append(each[-1])
+    return classes
 
+def compare(classes, labels): # return accuracy
+    match = 0
+    tot = len(classes)
+    for i in range(tot):       
+        if(classes[i] == labels[i]):
+            match += 1
+    return round(float(match) / tot, 4) * 100
+
+def find_accuracy(train, test):
+    features, attributes, classes = parse_file(train)
+    parents = []
+    map_list = []
+    last_feature = 0
+    dTree = {}
+    build_tree(features, attributes, classes, parents, map_list, last_feature, dTree)
+    print "Decision Tree - ", dTree
+    
+    # training accuracy
+    actual_labels = get_labels(attributes)
+    predicted_labels = classify_file(attributes, dTree)
+    train_acc = compare(actual_labels, predicted_labels)
+    print "Training Accuracy - ",  train_acc
+    
+    # testing accuracy
+    test_features, test_attributes, test_classes = parse_file(test)
+    actual_test_labels = get_labels(test_attributes)
+    predicted_test_labels = classify_file(test_attributes, dTree)
+    test_acc = compare(actual_test_labels, predicted_test_labels)
+    print "Testing Accuracy - ",  test_acc
+    
 if __name__ == "__main__":
-    if len(sys.argv) == 4:
-        train_acc, test_acc = find_accuracy(sys.argv[1], sys.argv[2], sys.argv[3])[:2]
-    elif len(sys.argv) == 3:
-        train_acc, test_acc = find_accuracy(sys.argv[1], sys.argv[2])[:2]
-    else:
-        print "Wrong number of arguments. Syntax: python dTree.py training_file testing_file optional_flag_to_print_decision_tree(0 or 1)."
-        sys.exit()
-    print "Accuracy on training file = %s%%" %train_acc
-    print "Accuracy on testing file = %s%%" %test_acc
+    find_accuracy(sys.argv[1], sys.argv[2])
